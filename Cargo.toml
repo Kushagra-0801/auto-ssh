@@ -1,0 +1,11 @@
+[package]
+name = "auto-ssh"
+authors = ["Kushagra Gupta <kushgpt08@gmail.com>"]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.64"
+description = "An ssh shim that runs multipass to start requested vm before ssh-ing into it"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
