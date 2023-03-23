@@ -1,31 +1,75 @@
-use std::env;
-use std::fs;
-use std::ops::Deref;
 use std::path::PathBuf;
 use std::process::Command;
+use std::{env, fs};
+
+#[cfg(windows)]
+const NULL_FILE: &str = "NUL";
+#[cfg(not(windows))]
+const NULL_FILE: &str = "/dev/null";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VmProvider {
+    Multipass,
+    VirtualBox,
+}
+
+use VmProvider::{Multipass, VirtualBox};
+
+const CONFIG: &[(&str, VmProvider)] = &[("work", Multipass), ("devops", VirtualBox)];
 
 fn main() {
-    let ssh_config = get_ssh_config_path();
-    let ssh_config = fs::read_to_string(ssh_config).unwrap();
-    let defined_hosts: Vec<_> = ssh_config
-        .lines()
-        .filter_map(|l| l.trim_start().strip_prefix("Host "))
-        .collect();
     let vm = env::args()
         .skip(1)
-        .find(|arg| defined_hosts.contains(&arg.deref()));
-    if let Some(vm) = vm {
-        #[rustfmt::skip]
-        let _start_vm = Command::new("multipass")
-            .args(["start", &vm])
-            .spawn().unwrap()
-            .wait().unwrap();
+        .find_map(|arg| CONFIG.iter().find(|(name, _)| name == &arg));
+    let Some(vm) = vm else { return spawn_ssh(); };
+    match vm {
+        (vm, Multipass) => {
+            start_multipass_vm(vm);
+            spawn_ssh();
+        }
+        (vm, VirtualBox) => {
+            start_virtualbox_vm(vm);
+            spawn_ssh();
+        }
     }
-    #[rustfmt::skip]
-    let _ssh_cmd = Command::new("ssh")
+}
+
+fn start_virtualbox_vm(vm: &str) {
+    Command::new("VBoxManage")
+        .args(["startvm", vm, "--type", "headless"])
+        .spawn()
+        .unwrap()
+        .wait()
+        .unwrap();
+}
+
+fn start_multipass_vm(vm: &str) {
+    let vm_ip = Command::new("multipass")
+        .args(["exec", vm, "--", ".local/bin/get-ip", "192"])
+        .output()
+        .unwrap();
+    let ip = String::from_utf8(vm_ip.stdout).unwrap().trim().to_owned();
+    let conf_contents = indoc::formatdoc!(
+        "
+        Host {vm}
+            Hostname {ip}
+            User ubuntu
+            StrictHostKeyChecking no
+            UserKnownHostsFile {NULL_FILE}
+            GlobalKnownHostsFile={NULL_FILE}
+        "
+    );
+    let conf_path = get_ssh_config_path().with_file_name("multipassvm.conf");
+    fs::write(conf_path, conf_contents).unwrap();
+}
+
+fn spawn_ssh() {
+    Command::new("ssh")
         .args(env::args().skip(1))
-        .spawn().unwrap()
-        .wait().unwrap();
+        .spawn()
+        .unwrap()
+        .wait()
+        .unwrap();
 }
 
 fn get_ssh_config_path() -> PathBuf {
